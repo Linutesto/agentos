@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#0a0a0f" />
+  <title>AgentOS · Login</title>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    .login-wrap { height: 100dvh; display: grid; place-items: center; padding: 24px; }
+    .login-card { width: 100%; max-width: 340px; text-align: center; }
+    .login-card .logo { font-size: 34px; color: var(--pink); letter-spacing: 3px; margin-bottom: 6px; }
+    .login-card .sub { color: var(--muted); font-size: 13px; margin-bottom: 26px; }
+    .login-card input {
+      width: 100%; text-align: center; letter-spacing: 4px; font-size: 20px;
+      background: var(--bg3); color: var(--text); border: 1px solid var(--line);
+      border-radius: 14px; padding: 15px; font-family: inherit; margin-bottom: 12px;
+    }
+    .login-card input:focus { outline: none; border-color: var(--pink); }
+    .login-card button {
+      width: 100%; background: var(--pink); color: #fff; border: none; border-radius: 14px;
+      padding: 15px; font-family: inherit; font-size: 16px; font-weight: 700;
+      box-shadow: 0 2px 16px rgba(255,46,136,.4);
+    }
+    .login-card button:disabled { background: var(--bg3); color: var(--muted); box-shadow: none; }
+    .err { color: var(--pink); font-size: 13px; min-height: 20px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="login-wrap">
+    <form class="login-card" id="loginForm">
+      <div class="logo">▚ AgentOS</div>
+      <div class="sub">Enter your admin PIN</div>
+      <input id="pin" type="password" inputmode="text" autocomplete="current-password" placeholder="••••••••" autofocus />
+      <button id="btn" type="submit">Unlock</button>
+      <div class="err" id="err"></div>
+    </form>
+  </div>
+  <script>
+    const form = document.getElementById('loginForm');
+    const btn = document.getElementById('btn');
+    const err = document.getElementById('err');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: document.getElementById('pin').value }),
+        });
+        if (res.ok) { location.href = '/'; return; }
+        const d = await res.json().catch(() => ({}));
+        err.textContent = d.error || 'Login failed';
+      } catch (e) {
+        err.textContent = 'Network error';
+      }
+      btn.disabled = false;
+    });
+  </script>
+</body>
+</html>

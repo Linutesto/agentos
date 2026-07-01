@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#0a0a0f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>AgentOS</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <button id="menuBtn" class="icon-btn" aria-label="Panel">⚙</button>
+      <button id="modelBtn" class="model-chip">
+        <span class="dot"></span><span id="modelLabel">loading…</span><span class="chev">▾</span>
+      </button>
+      <button id="chatsBtn" class="icon-btn" aria-label="Saved chats">📚</button>
+      <button id="newBtn" class="icon-btn" aria-label="New chat">＋</button>
+    </header>
+
+    <div id="modeRow">
+      <div class="seg">
+        <button class="seg-btn active" data-mode="chat">💬 Chat</button>
+        <button class="seg-btn" data-mode="agent">🛠 Agent</button>
+      </div>
+      <span id="permBadge" class="perm-badge" title="Permission mode">ASK</span>
+    </div>
+
+    <main id="messages">
+      <div class="empty" id="emptyState">
+        <div class="logo">▚ AgentOS</div>
+        <p>Chat with any NVIDIA model, or switch to <b>Agent</b> mode to let it use web search, your files &amp; tools.</p>
+      </div>
+    </main>
+
+    <div id="runBar" class="run-bar hidden">
+      <span class="spinner"></span>
+      <span id="runStatus">Agent working…</span>
+      <button id="stopBtn">■ Stop</button>
+    </div>
+
+    <footer id="composer">
+      <button id="attachBtn" class="icon-btn small" aria-label="Attach image">📎</button>
+      <input id="fileInput" type="file" accept="image/*" hidden />
+      <textarea id="input" rows="1" placeholder="Message…" autocomplete="off"></textarea>
+      <button id="sendBtn" aria-label="Send">➤</button>
+    </footer>
+    <div id="attachPreview" class="attach-preview hidden"></div>
+  </div>
+
+  <!-- Model picker -->
+  <div id="modelSheet" class="sheet hidden">
+    <div class="sheet-inner">
+      <div class="sheet-head"><span>Choose model</span><button class="icon-btn" id="modelClose">✕</button></div>
+      <input id="modelSearch" class="search" placeholder="Filter models…" />
+      <div id="modelList" class="model-list"></div>
+    </div>
+  </div>
+
+  <!-- Control panel: temperature + permissions + tools -->
+  <div id="panelSheet" class="sheet hidden">
+    <div class="sheet-inner">
+      <div class="sheet-head"><span>Control panel</span><button class="icon-btn" id="panelClose">✕</button></div>
+
+      <div class="section">
+        <label class="row-label">Temperature <span id="tempVal" class="mono">0.6</span></label>
+        <input id="tempSlider" class="slider-range" type="range" min="0" max="1.5" step="0.05" value="0.6" />
+      </div>
+
+      <div class="section">
+        <label class="row-label">Agent max steps <span id="stepsVal" class="mono">20</span></label>
+        <input id="stepsSlider" class="slider-range" type="range" min="4" max="60" step="1" value="20" />
+        <p class="hint">How many tool-calls the agent may chain before it must answer.</p>
+      </div>
+
+      <div class="section">
+        <label class="row-label">Permissions</label>
+        <div class="seg small">
+          <button class="perm-btn active" data-perm="ask">🔒 Ask</button>
+          <button class="perm-btn" data-perm="full">⚡ Full</button>
+        </div>
+        <p class="hint" id="permHint">Ask: approve each risky action. Full: the agent runs everything unattended.</p>
+      </div>
+
+      <div class="section">
+        <label class="row-label">Scope (agent's filesystem reach)</label>
+        <input id="scopeInput" class="search" placeholder="/home/yan" />
+        <div class="scope-quick">
+          <button class="chip-btn" data-scope="__home">🏠 Home</button>
+          <button class="chip-btn" data-scope="/">💻 Full PC</button>
+          <button class="chip-btn" id="scopeSave">Save scope</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <label class="row-label">Tools &amp; Plugins</label>
+        <div id="toolList" class="tool-list"></div>
+      </div>
+
+      <div class="section">
+        <label class="row-label">Skill library</label>
+        <button id="browseSkillsBtn" class="wide-btn skills">🧠 Browse skills</button>
+        <p class="hint">Capability guides the agent can search &amp; follow (skill_search / skill_load).</p>
+      </div>
+
+      <div class="section">
+        <button id="logoutBtn" class="wide-btn logout">🔒 Log out</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Skills browser -->
+  <div id="skillsSheet" class="sheet hidden">
+    <div class="sheet-inner">
+      <div class="sheet-head"><span>Skills <span id="skillsCount" class="mono"></span></span><button class="icon-btn" id="skillsClose">✕</button></div>
+      <input id="skillsSearch" class="search" placeholder="Search skills…" />
+      <div id="skillsList" class="model-list"></div>
+      <div id="skillView" class="skill-view hidden"></div>
+    </div>
+  </div>
+
+  <!-- Conversations -->
+  <div id="chatsSheet" class="sheet hidden">
+    <div class="sheet-inner">
+      <div class="sheet-head"><span>Saved chats</span><button class="icon-btn" id="chatsClose">✕</button></div>
+      <button id="saveChatBtn" class="wide-btn">💾 Save current chat</button>
+      <div id="chatsList" class="chats-list"></div>
+    </div>
+  </div>
+
+  <!-- Approval modal -->
+  <div id="approvalModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">⚠ Approve action?</div>
+      <div class="modal-risk" id="apRisk"></div>
+      <div class="modal-tool" id="apTool"></div>
+      <pre id="apArgs"></pre>
+      <div class="modal-actions">
+        <button id="apDeny" class="btn-deny">Deny</button>
+        <button id="apApprove" class="btn-approve">Approve</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

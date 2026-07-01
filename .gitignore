@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output (run `npx tsc` to regenerate)
+dist/
+
+# Logs & temp
+*.log
+*.tmp
+.DS_Store
+
+# Local env / secrets (secrets live in ~/.config/agentos and ~/.config/nvidia-nim)
+.env
+.env.*
+*.local
+
+# Never commit runtime state or credentials
+secrets.json
+auth.json
+conversations.json
+settings.json
+memory.db
