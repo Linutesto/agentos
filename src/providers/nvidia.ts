@@ -41,37 +41,62 @@ export class NvidiaProvider implements Provider {
     opts?: { temperature?: number; signal?: AbortSignal }
   ): Promise<string> {
     const timeout = this.config.timeoutMs ?? 120000;
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), timeout);
-    const signal = opts?.signal ? AbortSignal.any([opts.signal, ac.signal]) : ac.signal;
-    try {
-      const res = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: this.headers(),
-        signal,
-        body: JSON.stringify({
-          model: model || this.model,
-          messages: messages.map((m) => ({ role: m.role, content: (m as any).content })),
-          max_tokens: this.config.maxTokens ?? 8192,
-          temperature: opts?.temperature ?? this.config.temperature ?? 0.6,
-        }),
-      });
-      if (!res.ok) {
-        throw new Error(`NVIDIA API ${res.status}: ${await res.text()}`);
+    const maxAttempts = 3;
+    const body = JSON.stringify({
+      model: model || this.model,
+      messages: messages.map((m) => ({ role: m.role, content: (m as any).content })),
+      max_tokens: this.config.maxTokens ?? 8192,
+      temperature: opts?.temperature ?? this.config.temperature ?? 0.6,
+    });
+
+    let lastErr: any;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (opts?.signal?.aborted) throw new Error('Cancelled by user.');
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), timeout);
+      const signal = opts?.signal ? AbortSignal.any([opts.signal, ac.signal]) : ac.signal;
+      try {
+        const res = await fetch(`${this.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: this.headers(),
+          signal,
+          body,
+        });
+        // Transient server error (NVIDIA 5xx) — back off and retry.
+        if (res.status >= 500 && attempt < maxAttempts) {
+          lastErr = new Error(`NVIDIA API ${res.status}`);
+          await res.text().catch(() => {});
+          await new Promise((r) => setTimeout(r, 500 * attempt));
+          continue;
+        }
+        if (!res.ok) {
+          // 4xx (or a final 5xx): client/permanent error — do not retry.
+          const err: any = new Error(`NVIDIA API ${res.status}: ${await res.text()}`);
+          err.noRetry = true;
+          throw err;
+        }
+        const data: any = await res.json();
+        return data.choices?.[0]?.message?.content ?? '';
+      } catch (e: any) {
+        lastErr = e;
+        if (e.name === 'AbortError') {
+          if (opts?.signal?.aborted) throw new Error('Cancelled by user.');
+          throw new Error(
+            `Model '${model || this.model}' did not respond within ${timeout / 1000}s (NVIDIA capacity/queue). Try another model.`
+          );
+        }
+        if (e.noRetry) throw e; // HTTP error response — fail fast
+        // Network/transport error — retry unless this was the last attempt.
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 500 * attempt));
+          continue;
+        }
+        throw e;
+      } finally {
+        clearTimeout(timer);
       }
-      const data: any = await res.json();
-      return data.choices?.[0]?.message?.content ?? '';
-    } catch (e: any) {
-      if (e.name === 'AbortError') {
-        if (opts?.signal?.aborted) throw new Error('Cancelled by user.');
-        throw new Error(
-          `Model '${model || this.model}' did not respond within ${timeout / 1000}s (NVIDIA capacity/queue). Try another model.`
-        );
-      }
-      throw e;
-    } finally {
-      clearTimeout(timer);
     }
+    throw lastErr ?? new Error('NVIDIA request failed');
   }
 
   /**
@@ -91,18 +116,25 @@ export class NvidiaProvider implements Provider {
       idleTimer = setTimeout(() => ac.abort(), idle);
     };
 
-    const res = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: this.headers(),
-      signal,
-      body: JSON.stringify({
-        model: opts.model || this.model,
-        messages: messages.map((m) => ({ role: m.role, content: (m as any).content })),
-        max_tokens: this.config.maxTokens ?? 8192,
-        temperature: opts.temperature ?? this.config.temperature ?? 0.6,
-        stream: true,
-      }),
+    const body = JSON.stringify({
+      model: opts.model || this.model,
+      messages: messages.map((m) => ({ role: m.role, content: (m as any).content })),
+      max_tokens: this.config.maxTokens ?? 8192,
+      temperature: opts.temperature ?? this.config.temperature ?? 0.6,
+      stream: true,
     });
+    // Retry the initial connect on transient 5xx (safe: no tokens emitted yet).
+    let res: Response;
+    for (let attempt = 1; ; attempt++) {
+      res = await fetch(`${this.baseUrl}/chat/completions`, { method: 'POST', headers: this.headers(), signal, body });
+      resetIdle();
+      if (res.status >= 500 && attempt < 3) {
+        await res.text().catch(() => {});
+        await new Promise((r) => setTimeout(r, 500 * attempt));
+        continue;
+      }
+      break;
+    }
     if (!res.ok || !res.body) {
       clearTimeout(idleTimer);
       throw new Error(`NVIDIA API ${res.status}: ${await res.text()}`);
