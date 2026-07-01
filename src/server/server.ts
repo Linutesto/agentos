@@ -5,8 +5,9 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-import { ToolBus } from '../bus/toolbus.js';
+import { ToolBus, Tool } from '../bus/toolbus.js';
 import { EventBus, AgentEvent } from '../bus/eventbus.js';
+import { Orchestrator } from '../orch/orchestrator.js';
 import { MemoryDatabase } from '../memory/sqlite.js';
 import { AgentLoop, ChatMessage } from '../agent/loop.js';
 import { buildAgentSystemPrompt } from '../agent/prompt.js';
@@ -27,6 +28,11 @@ import { SkillRegistry } from '../skills/registry.js';
 import { cloudflareTools } from '../tools/cloudflare.js';
 import { createMemorySearchTool, createMemoryWriteTool } from '../tools/memory.js';
 import { createBusSearchTool, createBusDescribeTool } from '../tools/bus.js';
+import { credentialTools } from '../tools/credentials.js';
+import { browserTools } from '../tools/browser.js';
+import { createAliasTools } from '../tools/aliases.js';
+import { createSkillDependencyTool } from '../tools/skilldeps.js';
+import { githubTools } from '../tools/github.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(__dirname, '../../web');
@@ -87,19 +93,28 @@ export function startServer(opts: ServerOptions) {
   };
 
   const bus = new ToolBus(eventBus);
-  bus.register(bashTool);
-  bus.register(curlTool);
-  for (const t of webTools) bus.register(t);
-  for (const t of filesystemTools) bus.register(t);
-  for (const t of codeTools) bus.register(t);
-  bus.register(createVisionTool(provider));
-  bus.register(createForgeTool(bus));
-  for (const t of createSkillTools(skills)) bus.register(t);
-  bus.register(createBusSearchTool(bus));
-  bus.register(createBusDescribeTool(bus));
-  bus.register(createMemorySearchTool(db));
-  bus.register(createMemoryWriteTool(db));
-  for (const t of cloudflareTools) bus.register(t);
+  // Full tool registry as an array (reused by the orchestrator for role-scoped buses).
+  const allTools: Tool[] = [
+    bashTool,
+    curlTool,
+    ...webTools,
+    ...filesystemTools,
+    ...codeTools,
+    createVisionTool(provider),
+    createForgeTool(bus),
+    ...createSkillTools(skills),
+    createBusSearchTool(bus),
+    createBusDescribeTool(bus),
+    createMemorySearchTool(db),
+    createMemoryWriteTool(db),
+    ...credentialTools,
+    ...browserTools,
+    ...githubTools,
+    ...cloudflareTools,
+    ...createAliasTools(bus),
+    createSkillDependencyTool(bus),
+  ];
+  for (const t of allTools) bus.register(t);
 
   const disabled = new Set<string>();
   const pendingApprovals = new Map<string, (decision: string) => void>();
@@ -354,6 +369,37 @@ export function startServer(opts: ServerOptions) {
           sseSend(res, { type: 'error', error: e.message });
         } finally {
           eventBus.off('*', forward);
+        }
+        return res.end();
+      }
+
+      // ---------- orchestrator (hierarchical multi-agent) ----------
+      if (p === '/api/orchestrate' && req.method === 'POST') {
+        const { model, goal, budget, decompose } = await readBody(req);
+        sseInit(res);
+        const runAc = new AbortController();
+        res.on('close', () => runAc.abort());
+        const orch = new Orchestrator({
+          tools: allTools,
+          provider,
+          model: model || opts.defaultModel,
+          env: {
+            scope: perms.scope,
+            mode: perms.mode,
+            model: model || opts.defaultModel,
+            endpoint: 'NVIDIA NIM (integrate.api.nvidia.com)',
+            skillCount: skills.count,
+          },
+          emit: (ev) => sseSend(res, ev),
+          wrapBus: (b) => new PermissionedBus(b, makeGate(res)),
+          signal: runAc.signal,
+          budget,
+          forceDecompose: !!decompose,
+        });
+        try {
+          await orch.run(String(goal || '').trim());
+        } catch (e: any) {
+          sseSend(res, { type: 'error', error: e.message });
         }
         return res.end();
       }

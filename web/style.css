@@ -268,3 +268,32 @@ body {
 .hist-tabs { margin-bottom: 10px; }
 .seg.small .hist-tab { flex: 1; background: transparent; color: var(--muted); border: none; padding: 9px; border-radius: 9px; font-family: inherit; font-size: 13px; font-weight: 600; }
 .seg.small .hist-tab.active { background: var(--pink); color: #fff; }
+
+/* ---- Swarm / orchestrator dashboard ---- */
+.orch { margin: 8px 0 14px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--bg2); }
+.orch-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: linear-gradient(180deg, rgba(58,210,255,.08), transparent); border-bottom: 1px solid var(--line); font-weight: 700; }
+.orch-head span { color: var(--cyan); letter-spacing: 1px; }
+.orch-stop { background: var(--pink); color: #fff; border: none; border-radius: 9px; padding: 6px 12px; font-family: inherit; font-size: 12px; font-weight: 700; }
+.orch-stats { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.ochip { font-size: 10px; padding: 3px 7px; border-radius: 6px; background: var(--bg3); border: 1px solid var(--line); color: var(--muted); }
+.ochip.run { color: var(--cyan); } .ochip.ok { color: var(--green); } .ochip.bad { color: var(--pink); }
+.orch-tree { padding: 8px 10px 12px; overflow-x: auto; }
+
+.onode { }
+.onode-children { margin-left: 12px; padding-left: 10px; border-left: 1px dashed var(--line); }
+.onode.collapsed > .onode-children { display: none; }
+.onode-row { display: flex; align-items: center; gap: 7px; padding: 6px 4px; border-radius: 8px; font-size: 12px; }
+.onode-row:active { background: var(--bg3); }
+.ocaret { color: var(--muted); font-size: 10px; width: 10px; flex: 0 0 auto; }
+.onode.collapsed > .onode-row .ocaret { transform: rotate(-90deg); }
+.oicon { width: 16px; flex: 0 0 auto; text-align: center; }
+.orole { color: var(--cyan); font-weight: 700; flex: 0 0 auto; text-transform: uppercase; font-size: 10px; letter-spacing: .5px; }
+.ogoal { flex: 1 1 auto; min-width: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ometa { flex: 0 0 auto; color: var(--muted); font-size: 10px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.onode-row.done .oicon { color: var(--green); }
+.onode-row.failed .oicon, .onode-row.cancelled .oicon { color: var(--pink); }
+.onode-row.planning .oicon, .onode-row.reviewing .oicon, .onode-row.waiting .oicon { color: #ffb454; }
+.onode-row.done .orole { opacity: .7; }
+
+.ospin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: var(--cyan); border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; }

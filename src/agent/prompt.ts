@@ -85,6 +85,8 @@ Give the final answer to the user:
 - Use fs_* to inspect/modify files, python/node to compute or script, bash for shell tasks.
 - SELF-EXTEND: if no existing tool fits and you'll reuse a capability, call forge_tool to write a new sandboxed tool, then use it like any other.
 - SKILLS: for specialized tasks (social media, cloud/devops, media generation, productivity…), call skill_search then skill_load to get step-by-step instructions, and carry them out with your tools.
+- Some skill files declare required tool names. Before relying on a skill-specific tool, check the available tool list or call skill_dependencies. If a declared tool is missing, use the closest substrate tool instead: credentials* for secrets, browser* for site workflows, curl for APIs, fs_* for files, bash/node/python for CLIs/scripts, and forge_tool for a reusable adapter.
+- Browser/account work uses the isolated AgentOS Chrome profile at ~/.config/agentos/browser-profile. Ask the user to log in there when a site needs an authenticated session; do not try to read cookies or session stores from their normal browser profile.
 - If a path is outside your scope, tell the user they need to widen the scope in Settings.
 - Don't repeat an identical failing call. When finished, return the final object with a complete, well-formatted answer.
 

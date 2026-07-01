@@ -16,6 +16,7 @@
     "blessed": "^0.1.81",
     "commander": "^12.0.0",
     "dotenv": "^16.4.5",
+    "playwright-core": "^1.61.1",
     "prompts": "^2.4.2"
   },
   "devDependencies": {

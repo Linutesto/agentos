@@ -17,6 +17,7 @@ export interface Tool {
   permissions?: string[];
   costEstimate?: number;
   timeout?: number;
+  redactArgs?: string[] | true;
   execute: (args: any) => Promise<any>;
 }
 
@@ -74,7 +75,7 @@ export class ToolBus {
     if (!this.enabled.get(name)) throw new Error(`Tool disabled: ${name}`);
 
     // Audit log
-    console.error(`[AUDIT] Tool executed: ${name} with args:`, JSON.stringify(args));
+    console.error(`[AUDIT] Tool executed: ${name} with args:`, JSON.stringify(redactArgs(args, tool.redactArgs)));
     this.eventBus?.emit('tool.started', { name, args });
 
     const timeout = tool.timeout || 10000;
@@ -116,4 +117,39 @@ export class ToolBus {
   disable(name: string) {
     if (this.tools.has(name)) this.enabled.set(name, false);
   }
+}
+
+function redactArgs(args: any, explicit?: string[] | true): any {
+  if (!args || typeof args !== 'object') return args;
+  if (explicit === true) return '[redacted]';
+  const sensitive = new Set([
+    'access_token',
+    'accessToken',
+    'api_key',
+    'apiKey',
+    'auth',
+    'authorization',
+    'bearerToken',
+    'clientSecret',
+    'cookie',
+    'password',
+    'pin',
+    'secret',
+    'token',
+    'value',
+    ...(explicit || []),
+  ]);
+  const visit = (v: any): any => {
+    if (Array.isArray(v)) return v.map(visit);
+    if (!v || typeof v !== 'object') return v;
+    return Object.fromEntries(
+      Object.entries(v).map(([k, val]) => [
+        k,
+        sensitive.has(k) || /token|secret|password|api[-_]?key|cookie|authorization/i.test(k)
+          ? '[redacted]'
+          : visit(val),
+      ])
+    );
+  };
+  return visit(args);
 }

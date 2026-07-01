@@ -14,6 +14,7 @@ export class MemoryDatabase {
       dbPath = path.join(dir, 'memory.db');
     }
     this.db = new DatabaseSync(dbPath);
+    this.db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;');
     this.initSchema();
 
     if (this.eventBus) {

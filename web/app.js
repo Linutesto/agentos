@@ -17,6 +17,7 @@ const state = {
   runStep: 0,
   convHasAgent: false, // did this conversation use agent mode?
   histTab: 'chat', // history sheet active tab
+  orch: {}, // swarm dashboard state
   allConvos: [],
 };
 
@@ -71,11 +72,54 @@ function addCopyBtn(bubbleEl, getText) {
   const btn = document.createElement('button');
   btn.className = 'copy-btn';
   btn.textContent = '⧉ copy';
+  btn.type = 'button';
   btn.onclick = async () => {
-    try { await navigator.clipboard.writeText(getText()); btn.textContent = '✓ copied'; setTimeout(() => (btn.textContent = '⧉ copy'), 1200); } catch {}
+    try {
+      await copyText(getText());
+      btn.textContent = '✓ copied';
+      setTimeout(() => (btn.textContent = '⧉ copy'), 1200);
+    } catch (err) {
+      console.error('Copy failed:', err);
+      btn.textContent = 'copy failed';
+      setTimeout(() => (btn.textContent = '⧉ copy'), 1600);
+    }
   };
   bar.append(btn);
   bubbleEl.closest('.msg').append(bar);
+}
+
+async function copyText(value) {
+  const text = String(value ?? '');
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (err) {
+      console.warn('Clipboard API failed, trying fallback:', err);
+    }
+  }
+  fallbackCopyText(text);
+}
+
+function fallbackCopyText(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '0';
+  ta.style.left = '0';
+  ta.style.width = '1px';
+  ta.style.height = '1px';
+  ta.style.opacity = '0';
+  document.body.append(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
+  try {
+    if (!document.execCommand('copy')) throw new Error('document.execCommand("copy") returned false');
+  } finally {
+    ta.remove();
+  }
 }
 function addTraceContainer() { const t = document.createElement('div'); t.className = 'trace'; messagesEl.append(t); return t; }
 
@@ -163,8 +207,100 @@ async function send() {
   addMsg('user', text, attach?.url);
 
   if (state.mode === 'chat') await runChat(text, attach);
+  else if (state.mode === 'orchestrate') await runOrchestrate(text);
   else await runAgent(text);
   setStreaming(false);
+}
+
+// ---------- orchestrator (Swarm) dashboard ----------
+const STATUS_ICON = { pending: '○', planning: '◔', running: '', waiting: '⏳', reviewing: '🔍', done: '✓', failed: '✕', cancelled: '⊘' };
+
+function orchNodeEl(agent) {
+  const el = document.createElement('div');
+  el.className = 'onode';
+  el.innerHTML = `<div class="onode-row ${agent.status}">
+      <span class="ocaret">▾</span>
+      <span class="oicon"></span>
+      <span class="orole">${escapeHtml(agent.role)}</span>
+      <span class="ogoal">${escapeHtml(agent.goal)}</span>
+      <span class="ometa"></span>
+    </div>
+    <div class="onode-children"></div>`;
+  const row = el.querySelector('.onode-row');
+  row.querySelector('.ocaret').onclick = (e) => { e.stopPropagation(); el.classList.toggle('collapsed'); };
+  setNodeStatus(el, agent.status);
+  return el;
+}
+function setNodeStatus(el, status, note) {
+  const row = el.querySelector('.onode-row');
+  row.className = 'onode-row ' + status;
+  const icon = el.querySelector('.oicon');
+  icon.innerHTML = status === 'running' ? '<span class="ospin"></span>' : (STATUS_ICON[status] || '•');
+  if (note) el.querySelector('.ometa').textContent = note;
+}
+function renderStats(s) {
+  if (!state.orch.statsEl) return;
+  const sec = (s.elapsedMs / 1000).toFixed(0);
+  state.orch.statsEl.innerHTML =
+    `<span class="ochip">▦ ${s.total}</span>` +
+    `<span class="ochip run">⚙ ${s.running}</span>` +
+    `<span class="ochip ok">✓ ${s.done}</span>` +
+    `<span class="ochip bad">✕ ${s.failed}</span>` +
+    `<span class="ochip">~${s.tokensUsed.toLocaleString()} tok</span>` +
+    `<span class="ochip">depth ${s.maxDepthReached}</span>` +
+    `<span class="ochip">${sec}s</span>`;
+}
+
+async function runOrchestrate(goal) {
+  clearEmpty();
+  state.orch = { nodes: new Map() };
+  const board = document.createElement('div');
+  board.className = 'orch';
+  board.innerHTML = `<div class="orch-head"><span>🕸 Swarm</span><button class="orch-stop">■ Stop</button></div>
+     <div class="orch-stats"></div><div class="orch-tree"></div>`;
+  messagesEl.append(board);
+  state.orch.statsEl = board.querySelector('.orch-stats');
+  state.orch.treeEl = board.querySelector('.orch-tree');
+  const ac = new AbortController();
+  state.agentAbort = ac;
+  board.querySelector('.orch-stop').onclick = () => ac.abort();
+  scrollDown();
+
+  try {
+    await streamPost('/api/orchestrate', { model: state.model, goal, decompose: true, temperature: state.temperature }, (ev) => {
+      if (ev.type === 'agent.created') {
+        const a = ev.agent;
+        const el = orchNodeEl(a);
+        state.orch.nodes.set(a.id, el);
+        const parent = a.parentId && state.orch.nodes.get(a.parentId);
+        (parent ? parent.querySelector('.onode-children') : state.orch.treeEl).append(el);
+        scrollDown();
+      } else if (ev.type === 'agent.status') {
+        const el = state.orch.nodes.get(ev.id); if (el) setNodeStatus(el, ev.status, ev.note);
+      } else if (ev.type === 'agent.tokens') {
+        const el = state.orch.nodes.get(ev.id); if (el) el.querySelector('.ometa').textContent = `~${ev.tokensUsed.toLocaleString()} tok`;
+      } else if (ev.type === 'agent.tool') {
+        const el = state.orch.nodes.get(ev.id); if (el) el.querySelector('.ometa').textContent = `⚡ ${ev.name} ${ev.phase === 'done' ? '✓' : ev.phase === 'error' ? '✕' : '…'}`;
+      } else if (ev.type === 'agent.failed') {
+        const el = state.orch.nodes.get(ev.id); if (el) { setNodeStatus(el, 'failed'); el.querySelector('.ometa').textContent = ev.error?.slice(0, 60) || 'failed'; }
+      } else if (ev.type === 'stats') {
+        renderStats(ev.stats);
+      } else if (ev.type === 'approval') {
+        handleApproval(ev);
+      } else if (ev.type === 'final') {
+        renderStats(ev.stats);
+        const b = addMsg('ai', ev.content);
+        addCopyBtn(b, () => ev.content);
+        if (ev.status !== 'success') { const w = document.createElement('div'); w.className = 'truncated'; w.textContent = `status: ${ev.status}`; b.after(w); }
+      } else if (ev.type === 'error') {
+        const w = addMsg('ai', `⚠ ${ev.error}`);
+      }
+    }, ac.signal);
+  } catch (e) {
+    if (e.name !== 'AbortError') addMsg('ai', `⚠ ${e.message}`);
+  } finally {
+    state.agentAbort = null;
+  }
 }
 
 async function runChat(text, attach) {
@@ -407,7 +543,7 @@ document.querySelectorAll('.seg-btn').forEach((b) => {
     document.querySelectorAll('.seg-btn').forEach((x) => x.classList.remove('active'));
     b.classList.add('active');
     state.mode = b.dataset.mode;
-    $('#input').placeholder = state.mode === 'agent' ? 'Give the agent a task…' : 'Message…';
+    $('#input').placeholder = state.mode === 'agent' ? 'Give the agent a task…' : state.mode === 'orchestrate' ? 'Give the swarm a complex goal…' : 'Message…';
   };
 });
 

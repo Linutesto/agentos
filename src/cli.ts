@@ -16,6 +16,11 @@ import { EventBus } from './bus/eventbus.js';
 import { MemoryDatabase } from './memory/sqlite.js';
 import { createMemorySearchTool, createMemoryWriteTool } from './tools/memory.js';
 import { createBusSearchTool, createBusDescribeTool } from './tools/bus.js';
+import { credentialTools } from './tools/credentials.js';
+import { browserTools } from './tools/browser.js';
+import { createAliasTools } from './tools/aliases.js';
+import { createSkillDependencyTool } from './tools/skilldeps.js';
+import { githubTools } from './tools/github.js';
 import { AgentTUI } from './ui/app.js';
 import * as readline from 'readline';
 import { OllamaProvider } from './providers/ollama.js';
@@ -62,9 +67,14 @@ bus.register(createBusSearchTool(bus));
 bus.register(createBusDescribeTool(bus));
 bus.register(createMemorySearchTool(db));
 bus.register(createMemoryWriteTool(db));
+for (const t of credentialTools) bus.register(t);
+for (const t of browserTools) bus.register(t);
+for (const t of githubTools) bus.register(t);
 for (const tool of cloudflareTools) {
   bus.register(tool);
 }
+for (const t of createAliasTools(bus)) bus.register(t);
+bus.register(createSkillDependencyTool(bus));
 
 program
   .name('agentos')
@@ -250,6 +260,9 @@ toolCmd
       const parsedArgs = JSON.parse(args);
       const result = await bus.execute(name, parsedArgs);
       console.log(JSON.stringify(result, null, 2));
+      if (name.startsWith('browser') && name !== 'browserSession') {
+        await bus.execute('browserSession', { action: 'close' }).catch(() => {});
+      }
     } catch (e: any) {
       console.error('Error:', e.message);
     }
