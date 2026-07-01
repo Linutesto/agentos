@@ -121,11 +121,15 @@
     </div>
   </div>
 
-  <!-- Conversations -->
+  <!-- History (chats + agent runs) -->
   <div id="chatsSheet" class="sheet hidden">
     <div class="sheet-inner">
-      <div class="sheet-head"><span>Saved chats</span><button class="icon-btn" id="chatsClose">✕</button></div>
-      <button id="saveChatBtn" class="wide-btn">💾 Save current chat</button>
+      <div class="sheet-head"><span>History</span><button class="icon-btn" id="chatsClose">✕</button></div>
+      <div class="seg small hist-tabs">
+        <button class="hist-tab active" data-htab="chat">💬 Chats</button>
+        <button class="hist-tab" data-htab="agent">🛠 Agent runs</button>
+      </div>
+      <p class="hint">Auto-saved. Tap one to return to it.</p>
       <div id="chatsList" class="chats-list"></div>
     </div>
   </div>

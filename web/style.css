@@ -263,3 +263,8 @@ body {
 .skill-view.hidden { display: none; }
 .skill-view pre { background: #000; border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-x: auto; font-size: 11px; white-space: pre-wrap; word-break: break-word; max-height: 55dvh; overflow-y: auto; }
 .skill-view .back { background: var(--bg3); border: 1px solid var(--line); color: var(--text); border-radius: 9px; padding: 8px 14px; font-family: inherit; font-size: 12px; margin-bottom: 10px; }
+
+/* ---- history tabs ---- */
+.hist-tabs { margin-bottom: 10px; }
+.seg.small .hist-tab { flex: 1; background: transparent; color: var(--muted); border: none; padding: 9px; border-radius: 9px; font-family: inherit; font-size: 13px; font-weight: 600; }
+.seg.small .hist-tab.active { background: var(--pink); color: #fff; }

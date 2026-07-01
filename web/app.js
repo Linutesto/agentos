@@ -15,6 +15,9 @@ const state = {
   runTimer: null,
   runStart: 0,
   runStep: 0,
+  convHasAgent: false, // did this conversation use agent mode?
+  histTab: 'chat', // history sheet active tab
+  allConvos: [],
 };
 
 // ---------- tiny markdown ----------
@@ -92,6 +95,25 @@ function hideRunBar() {
 }
 function traceStep(container, cls, html) { const s = document.createElement('div'); s.className = `step ${cls}`; s.innerHTML = html; container.append(s); scrollDown(); return s; }
 
+// Render one persisted/live tool step into a trace container.
+function appendToolStep(container, s) {
+  if (s.k === 'start') traceStep(container, '', `<span class="name">⚡ ${escapeHtml(s.name)}</span><pre>${escapeHtml(JSON.stringify(s.args ?? {}, null, 2))}</pre>`);
+  else if (s.k === 'done') traceStep(container, '', `<details><summary><span class="name">✓ ${escapeHtml(s.name)}</span></summary><pre>${escapeHtml(String(s.result ?? '').slice(0, 4000))}</pre></details>`);
+  else if (s.k === 'error') traceStep(container, 'err', `<span class="name">✕ ${escapeHtml(s.name)}</span><pre>${escapeHtml(String(s.error ?? ''))}</pre>`);
+}
+
+// Persist the current conversation (auto-save, every turn).
+async function autosave() {
+  if (!state.history.length) return;
+  if (!state.convId) state.convId = (crypto.randomUUID && crypto.randomUUID()) || String(Date.now());
+  try {
+    await fetch('/api/conversations', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: state.convId, title: '', mode: state.convHasAgent ? 'agent' : 'chat', model: state.model, messages: state.history }),
+    });
+  } catch {}
+}
+
 // ---------- SSE ----------
 async function streamPost(url, body, onEvent, signal) {
   const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
@@ -163,28 +185,34 @@ async function runChat(text, attach) {
   bubble.classList.remove('cursor');
   addCopyBtn(bubble, () => full);
   state.history.push({ role: 'assistant', content: full });
+  autosave();
 }
 
 async function runAgent(text) {
+  state.convHasAgent = true;
+  const priorHistory = state.history.slice();       // sent to server (no current turn)
+  state.history.push({ role: 'user', content: text }); // local record for display + save
   const trace = addTraceContainer();
   const thinking = traceStep(trace, '', '<span class="thinking">▚ thinking…</span>');
+  const steps = []; // persisted trace
   const ac = new AbortController();
   state.agentAbort = ac;
+  let done = false;
   showRunBar();
   try {
-    await streamPost('/api/agent', { model: state.model, prompt: text, history: state.history, temperature: state.temperature, maxSteps: state.maxSteps }, (ev) => {
+    await streamPost('/api/agent', { model: state.model, prompt: text, history: priorHistory, temperature: state.temperature, maxSteps: state.maxSteps }, (ev) => {
       if (ev.type === 'thinking') { state.runStep = ev.iter; thinking.innerHTML = `<span class="thinking">▚ reasoning (step ${ev.iter})…</span>`; }
       else if (ev.type === 'approval') handleApproval(ev);
       else if (ev.type === 'tool') {
-        if (ev.phase === 'start') traceStep(trace, '', `<span class="name">⚡ ${ev.name}</span><pre>${escapeHtml(JSON.stringify(ev.args, null, 2))}</pre>`);
-        else if (ev.phase === 'done') { const r = typeof ev.result === 'string' ? ev.result : JSON.stringify(ev.result, null, 2); traceStep(trace, '', `<details><summary><span class="name">✓ ${ev.name}</span></summary><pre>${escapeHtml(r.slice(0, 4000))}</pre></details>`); }
-        else if (ev.phase === 'error') traceStep(trace, 'err', `<span class="name">✕ ${ev.name}</span><pre>${escapeHtml(String(ev.error))}</pre>`);
+        if (ev.phase === 'start') { const s = { k: 'start', name: ev.name, args: ev.args }; steps.push(s); appendToolStep(trace, s); }
+        else if (ev.phase === 'done') { const r = typeof ev.result === 'string' ? ev.result : JSON.stringify(ev.result, null, 2); const s = { k: 'done', name: ev.name, result: r.slice(0, 4000) }; steps.push(s); appendToolStep(trace, s); }
+        else if (ev.phase === 'error') { const s = { k: 'error', name: ev.name, error: String(ev.error) }; steps.push(s); appendToolStep(trace, s); }
       } else if (ev.type === 'final') {
+        done = true;
         thinking.remove();
         const b = addMsg('ai', ev.content);
         addCopyBtn(b, () => ev.content);
-        state.history.push({ role: 'user', content: text });
-        state.history.push({ role: 'assistant', content: ev.content });
+        state.history.push({ role: 'assistant', content: ev.content, trace: steps });
         if (ev.status !== 'success') { const w = document.createElement('div'); w.className = 'truncated'; w.textContent = `status: ${ev.status} · ${ev.iterations} steps`; b.after(w); }
       } else if (ev.type === 'error') thinking.innerHTML = `<span class="name">⚠ ${ev.error}</span>`;
     }, ac.signal);
@@ -193,6 +221,9 @@ async function runAgent(text) {
     else thinking.innerHTML = `<span class="name">⚠ ${e.message}</span>`;
   } finally {
     hideRunBar();
+    // Record the run even if stopped/errored, so it's returnable in history.
+    if (!done) state.history.push({ role: 'assistant', content: '_(run stopped)_', trace: steps });
+    autosave();
   }
 }
 
@@ -292,43 +323,48 @@ async function saveSettings(patch) {
   applyPermUI();
 }
 
-// ---------- conversations ----------
+// ---------- conversations / history ----------
 async function loadChats() {
   const { conversations } = await (await fetch('/api/conversations')).json();
+  state.allConvos = conversations || [];
+  renderChats();
+}
+function renderChats() {
+  const tab = state.histTab;
   const list = $('#chatsList');
+  const items = state.allConvos.filter((c) => (c.mode === 'agent' ? 'agent' : 'chat') === tab);
   list.innerHTML = '';
-  if (!conversations.length) { list.innerHTML = '<p class="hint">No saved chats yet.</p>'; return; }
-  conversations.forEach((c) => {
+  if (!items.length) { list.innerHTML = `<p class="hint">No ${tab === 'agent' ? 'agent runs' : 'chats'} yet.</p>`; return; }
+  items.forEach((c) => {
     const row = document.createElement('div');
     row.className = 'chat-item';
     const d = new Date(c.updated).toLocaleString();
-    row.innerHTML = `<div class="ctitle"><div class="cname">${escapeHtml(c.title)}</div><div class="cmeta">${c.mode} · ${c.model.split('/').pop()} · ${d}</div></div><button class="cdel">🗑</button>`;
+    const cur = c.id === state.convId ? ' • current' : '';
+    row.innerHTML = `<div class="ctitle"><div class="cname">${escapeHtml(c.title)}</div><div class="cmeta">${c.model.split('/').pop()} · ${d}${cur}</div></div><button class="cdel">🗑</button>`;
     row.querySelector('.ctitle').onclick = () => loadConversation(c.id);
-    row.querySelector('.cdel').onclick = async (e) => { e.stopPropagation(); await fetch('/api/conversations/' + c.id, { method: 'DELETE' }); loadChats(); };
+    row.querySelector('.cdel').onclick = async (e) => { e.stopPropagation(); await fetch('/api/conversations/' + c.id, { method: 'DELETE' }); if (c.id === state.convId) state.convId = null; loadChats(); };
     list.append(row);
   });
-}
-async function saveCurrentChat() {
-  if (!state.history.length) return;
-  if (!state.convId) state.convId = (crypto.randomUUID && crypto.randomUUID()) || String(Date.now());
-  await fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: state.convId, title: '', mode: state.mode, model: state.model, messages: state.history }) });
-  $('#saveChatBtn').textContent = '✓ Saved';
-  setTimeout(() => ($('#saveChatBtn').textContent = '💾 Save current chat'), 1200);
-  loadChats();
 }
 async function loadConversation(id) {
   const c = await (await fetch('/api/conversations/' + id)).json();
   state.history = c.messages || [];
   state.model = c.model; setModelLabel();
   state.convId = c.id;
+  state.convHasAgent = c.mode === 'agent';
   messagesEl.innerHTML = '';
-  c.messages.forEach((m) => {
+  (c.messages || []).forEach((m) => {
+    if (m.role === 'assistant' && Array.isArray(m.trace) && m.trace.length) {
+      const tc = addTraceContainer();
+      m.trace.forEach((s) => appendToolStep(tc, s));
+    }
     let text = m.content, img;
     if (Array.isArray(m.content)) {
       text = (m.content.find((x) => x.type === 'text') || {}).text || '';
       img = (m.content.find((x) => x.type === 'image_url') || {}).image_url?.url;
     }
-    addMsg(m.role === 'assistant' ? 'ai' : m.role, text, img);
+    const bub = addMsg(m.role === 'assistant' ? 'ai' : m.role, text, img);
+    if (m.role === 'assistant') addCopyBtn(bub, () => (typeof m.content === 'string' ? m.content : text));
   });
   closeSheets();
 }
@@ -394,7 +430,14 @@ $('#scopeSave').onclick = () => saveSettings({ scope: $('#scopeInput').value.tri
 // chats sheet
 $('#chatsBtn').onclick = () => { loadChats(); $('#chatsSheet').classList.remove('hidden'); };
 $('#chatsClose').onclick = closeSheets;
-$('#saveChatBtn').onclick = saveCurrentChat;
+document.querySelectorAll('.hist-tab').forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll('.hist-tab').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    state.histTab = b.dataset.htab;
+    renderChats();
+  };
+});
 $('#logoutBtn').onclick = async () => { await fetch('/api/logout', { method: 'POST' }); location.href = '/'; };
 
 // skills sheet
@@ -405,7 +448,7 @@ $('#skillsSearch').addEventListener('input', (e) => { clearTimeout(skillsT); ski
 
 $('#newBtn').onclick = () => {
   if (state.streaming) return;
-  state.history = []; state.convId = null; clearAttachment();
+  state.history = []; state.convId = null; state.convHasAgent = false; clearAttachment();
   messagesEl.innerHTML = '<div class="empty" id="emptyState"><div class="logo">▚ AgentOS</div><p>New session. Chat or switch to <b>Agent</b> mode for tools &amp; web search.</p></div>';
 };
 
