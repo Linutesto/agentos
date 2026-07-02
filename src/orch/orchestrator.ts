@@ -19,6 +19,9 @@ export interface OrchestratorConfig {
   signal?: AbortSignal;
   budget?: Partial<Budget>;
   forceDecompose?: boolean;                        // always split the root goal into sub-agents
+  review?: boolean;                                // review producer artifacts (default true)
+  maxFixCycles?: number;                           // review→fix iterations (default 1)
+  costPerMTok?: number;                            // $ per 1M tokens for the cost estimate
 }
 
 const DEFAULT_BUDGET: Budget = { maxTokens: 400_000, maxChildren: 6, maxDepth: 3, timeMs: 8 * 60_000 };
@@ -74,14 +77,26 @@ export class Orchestrator {
 
   private stats(): RunStats {
     const a = [...this.agents.values()];
+    const now = this.now();
+    const active = a.filter((x) => ['running', 'planning', 'reviewing'].includes(x.status));
+    // Bottleneck = the active agent that has been running the longest.
+    let bottleneck: RunStats['bottleneck'] = null;
+    for (const x of active) {
+      const el = now - x.createdAt;
+      if (!bottleneck || el > bottleneck.elapsedMs) bottleneck = { id: x.id, role: x.role, goal: x.goal.slice(0, 60), elapsedMs: el };
+    }
+    const rate = this.cfg.costPerMTok ?? 0; // NIM free tier → 0 by default
     return {
       total: a.length,
-      running: a.filter((x) => ['running', 'planning', 'reviewing', 'waiting'].includes(x.status)).length,
+      running: active.length,
+      queued: a.filter((x) => x.status === 'pending' || x.status === 'waiting').length,
       done: a.filter((x) => x.status === 'done').length,
       failed: a.filter((x) => x.status === 'failed' || x.status === 'cancelled').length,
       tokensUsed: this.tokensUsed,
+      costUsd: (this.tokensUsed / 1_000_000) * rate,
       maxDepthReached: a.reduce((m, x) => Math.max(m, x.depth), 0),
-      elapsedMs: this.now() - this.start,
+      elapsedMs: now - this.start,
+      bottleneck,
     };
   }
 
@@ -203,6 +218,49 @@ export class Orchestrator {
     return out;
   }
 
+  // ---- review → fix ----
+  private reviewable(role: AgentRole) {
+    return !['reviewer', 'integrator', 'planner', 'root'].includes(role);
+  }
+
+  private async reviewArtifact(reviewer: SubAgent, goal: string, artifact: string): Promise<{ approve: boolean; reasons: string }> {
+    const sys = ROLES.reviewer.persona + ' Reply with ONLY a JSON object.';
+    const user = `Goal:\n${goal}\n\nArtifact to review:\n${artifact.slice(0, 4000)}\n\nReturn JSON: {"approve":bool,"reasons":"concrete, actionable feedback"}. Approve only if the artifact correctly and completely satisfies the goal.`;
+    const out = await this.llm([{ role: 'system', content: sys }, { role: 'user', content: user }], reviewer);
+    const j = extractJson<{ approve: boolean; reasons: string }>(out);
+    // Fail open (approve) if parsing fails, to avoid endless reject loops.
+    return { approve: j?.approve !== false, reasons: String(j?.reasons || out).slice(0, 400) };
+  }
+
+  /** Review a producer's artifact; on reject spawn a dedicated Fix agent and re-review (bounded). */
+  private async reviewLoop(agent: SubAgent): Promise<void> {
+    if (this.cfg.review === false || !this.reviewable(agent.role)) return;
+    if (this.aborted() || this.overTime()) return;
+    const maxCycles = this.cfg.maxFixCycles ?? 1;
+    let artifact = agent.result || '';
+
+    for (let cycle = 0; cycle <= maxCycles; cycle++) {
+      if (this.aborted() || this.overTime()) return;
+      const reviewer = this.newAgent(`Review: ${agent.goal}`, 'reviewer', agent.depth + 1, agent.id);
+      this.setStatus(reviewer, 'reviewing');
+      const verdict = await this.reviewArtifact(reviewer, agent.goal, artifact);
+      reviewer.result = `${verdict.approve ? 'APPROVE' : 'REJECT'} — ${verdict.reasons}`;
+      reviewer.confidence = verdict.approve ? 0.9 : 0.5;
+      this.finish(reviewer, 'done');
+      this.cfg.emit({ type: 'agent.review', id: reviewer.id, target: agent.id, verdict: verdict.approve ? 'approve' : 'reject', reasons: verdict.reasons });
+
+      if (verdict.approve) { agent.note = 'reviewed ✓'; this.cfg.emit({ type: 'agent.status', id: agent.id, status: agent.status, note: agent.note }); return; }
+      if (cycle >= maxCycles) { agent.note = 'review unresolved'; this.cfg.emit({ type: 'agent.status', id: agent.id, status: agent.status, note: agent.note }); return; }
+
+      // Rejected → dedicated Fix agent addressing only the reviewer's points.
+      const fixer = this.newAgent(`Fix per review: ${agent.goal}`, agent.role, agent.depth + 1, agent.id);
+      const ctx = `A reviewer REJECTED the previous attempt.\n\nReviewer feedback:\n${verdict.reasons}\n\nPrevious artifact:\n${artifact.slice(0, 3000)}\n\nFix ONLY the issues the reviewer raised; keep the rest. Produce the corrected artifact.`;
+      await this.runWithRecovery(fixer, () => this.executeLeaf(fixer, ctx));
+      if (fixer.status === 'done' && fixer.result) { artifact = fixer.result; agent.result = fixer.result; }
+      else { agent.note = 'fix agent failed'; return; }
+    }
+  }
+
   // ---- recursive node processing ----
   private async node(agent: SubAgent, context: string): Promise<void> {
     if (this.aborted()) { agent.error = 'cancelled'; this.finish(agent, 'failed'); return; }
@@ -223,6 +281,7 @@ export class Orchestrator {
 
     if (!delegate) {
       await this.runWithRecovery(agent, () => this.executeLeaf(agent, context));
+      if (agent.status === 'done') await this.reviewLoop(agent);
       return;
     }
 

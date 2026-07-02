@@ -297,3 +297,13 @@ body {
 .onode-row.done .orole { opacity: .7; }
 
 .ospin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: var(--cyan); border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; }
+
+/* ---- swarm: metrics + review states ---- */
+.ochip.wait { color: #ffb454; }
+.ochip.cost { color: var(--green); }
+.ochip.neck { color: var(--muted); max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ometa.ok { color: var(--green) !important; }
+.ometa.bad { color: var(--pink) !important; }
+.onode-row.rejected { background: rgba(255,46,136,.08); border-left: 2px solid var(--pink); }
+.onode-row.approved { border-left: 2px solid var(--green); }
+.onode-row.reviewing .orole { color: #ffb454; }

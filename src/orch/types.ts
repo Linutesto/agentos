@@ -88,17 +88,28 @@ export type OrchEvent =
   | { type: 'agent.status'; id: string; status: AgentStatus; note?: string }
   | { type: 'agent.tokens'; id: string; tokensUsed: number }
   | { type: 'agent.tool'; id: string; name: string; phase: 'start' | 'done' | 'error' }
+  | { type: 'agent.review'; id: string; target: string; verdict: 'approve' | 'reject'; reasons: string }
   | { type: 'agent.done'; id: string; summary?: string; confidence?: number }
   | { type: 'agent.failed'; id: string; error: string }
   | { type: 'stats'; stats: RunStats }
   | { type: 'final'; content: string; status: string; stats: RunStats };
 
+export interface Bottleneck {
+  id: string;
+  role: AgentRole;
+  goal: string;
+  elapsedMs: number;
+}
+
 export interface RunStats {
   total: number;
   running: number;
+  queued: number;      // pending/waiting on dependencies
   done: number;
   failed: number;
   tokensUsed: number;
+  costUsd: number;     // estimate
   maxDepthReached: number;
   elapsedMs: number;
+  bottleneck: Bottleneck | null; // longest currently-running agent
 }

@@ -375,7 +375,7 @@ export function startServer(opts: ServerOptions) {
 
       // ---------- orchestrator (hierarchical multi-agent) ----------
       if (p === '/api/orchestrate' && req.method === 'POST') {
-        const { model, goal, budget, decompose } = await readBody(req);
+        const { model, goal, budget, decompose, review, maxFixCycles, costPerMTok } = await readBody(req);
         sseInit(res);
         const runAc = new AbortController();
         res.on('close', () => runAc.abort());
@@ -395,6 +395,9 @@ export function startServer(opts: ServerOptions) {
           signal: runAc.signal,
           budget,
           forceDecompose: !!decompose,
+          review: review !== false,
+          maxFixCycles: typeof maxFixCycles === 'number' ? maxFixCycles : 1,
+          costPerMTok: typeof costPerMTok === 'number' ? costPerMTok : 0.15,
         });
         try {
           await orch.run(String(goal || '').trim());

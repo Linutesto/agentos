@@ -241,14 +241,19 @@ function setNodeStatus(el, status, note) {
 function renderStats(s) {
   if (!state.orch.statsEl) return;
   const sec = (s.elapsedMs / 1000).toFixed(0);
+  const cost = (s.costUsd ?? 0) < 0.005 ? '$0.00' : '$' + s.costUsd.toFixed(3);
+  const bn = s.bottleneck ? `${s.bottleneck.role} ${(s.bottleneck.elapsedMs / 1000).toFixed(0)}s` : '—';
   state.orch.statsEl.innerHTML =
     `<span class="ochip">▦ ${s.total}</span>` +
     `<span class="ochip run">⚙ ${s.running}</span>` +
+    `<span class="ochip wait">⏳ ${s.queued ?? 0}</span>` +
     `<span class="ochip ok">✓ ${s.done}</span>` +
     `<span class="ochip bad">✕ ${s.failed}</span>` +
     `<span class="ochip">~${s.tokensUsed.toLocaleString()} tok</span>` +
+    `<span class="ochip cost">${cost}</span>` +
     `<span class="ochip">depth ${s.maxDepthReached}</span>` +
-    `<span class="ochip">${sec}s</span>`;
+    `<span class="ochip">${sec}s</span>` +
+    `<span class="ochip neck" title="current bottleneck">🐢 ${bn}</span>`;
 }
 
 async function runOrchestrate(goal) {
@@ -281,6 +286,11 @@ async function runOrchestrate(goal) {
         const el = state.orch.nodes.get(ev.id); if (el) el.querySelector('.ometa').textContent = `~${ev.tokensUsed.toLocaleString()} tok`;
       } else if (ev.type === 'agent.tool') {
         const el = state.orch.nodes.get(ev.id); if (el) el.querySelector('.ometa').textContent = `⚡ ${ev.name} ${ev.phase === 'done' ? '✓' : ev.phase === 'error' ? '✕' : '…'}`;
+      } else if (ev.type === 'agent.review') {
+        const el = state.orch.nodes.get(ev.id);
+        if (el) { const m = el.querySelector('.ometa'); m.textContent = (ev.verdict === 'approve' ? '✓ ' : '✕ ') + (ev.reasons || '').slice(0, 50); m.className = 'ometa ' + (ev.verdict === 'approve' ? 'ok' : 'bad'); }
+        const tgt = state.orch.nodes.get(ev.target);
+        if (tgt) tgt.querySelector('.onode-row').classList.add(ev.verdict === 'reject' ? 'rejected' : 'approved');
       } else if (ev.type === 'agent.failed') {
         const el = state.orch.nodes.get(ev.id); if (el) { setNodeStatus(el, 'failed'); el.querySelector('.ometa').textContent = ev.error?.slice(0, 60) || 'failed'; }
       } else if (ev.type === 'stats') {
