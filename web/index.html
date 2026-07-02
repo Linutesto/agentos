@@ -77,6 +77,12 @@
       </div>
 
       <div class="section">
+        <label class="row-label">🕸 Swarm max steps <span id="swarmStepsVal" class="mono">300</span></label>
+        <input id="swarmStepsSlider" class="slider-range swarm" type="range" min="100" max="1000" step="50" value="300" />
+        <p class="hint">Total iterations shared across ALL sub-agents in a swarm run.</p>
+      </div>
+
+      <div class="section">
         <label class="row-label">Permissions</label>
         <div class="seg small">
           <button class="perm-btn active" data-perm="ask">🔒 Ask</button>

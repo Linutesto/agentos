@@ -17,6 +17,7 @@ const state = {
   runStep: 0,
   convHasAgent: false, // did this conversation use agent mode?
   histTab: 'chat', // history sheet active tab
+  swarmSteps: 300, // total step budget for swarm runs
   orch: {}, // swarm dashboard state
   allConvos: [],
 };
@@ -245,6 +246,7 @@ function renderStats(s) {
   const bn = s.bottleneck ? `${s.bottleneck.role} ${(s.bottleneck.elapsedMs / 1000).toFixed(0)}s` : '—';
   state.orch.statsEl.innerHTML =
     `<span class="ochip">▦ ${s.total}</span>` +
+    `<span class="ochip step">▶ ${s.stepsUsed ?? 0}/${s.maxSteps ?? '?'}</span>` +
     `<span class="ochip run">⚙ ${s.running}</span>` +
     `<span class="ochip wait">⏳ ${s.queued ?? 0}</span>` +
     `<span class="ochip ok">✓ ${s.done}</span>` +
@@ -272,7 +274,7 @@ async function runOrchestrate(goal) {
   scrollDown();
 
   try {
-    await streamPost('/api/orchestrate', { model: state.model, goal, decompose: true, temperature: state.temperature }, (ev) => {
+    await streamPost('/api/orchestrate', { model: state.model, goal, decompose: true, temperature: state.temperature, budget: { maxSteps: state.swarmSteps } }, (ev) => {
       if (ev.type === 'agent.created') {
         const a = ev.agent;
         const el = orchNodeEl(a);
@@ -567,6 +569,7 @@ $('#menuBtn').onclick = () => { loadTools(); loadSettings(); $('#panelSheet').cl
 $('#panelClose').onclick = closeSheets;
 $('#tempSlider').addEventListener('input', (e) => { state.temperature = parseFloat(e.target.value); $('#tempVal').textContent = e.target.value; });
 $('#stepsSlider').addEventListener('input', (e) => { state.maxSteps = parseInt(e.target.value, 10); $('#stepsVal').textContent = e.target.value; });
+$('#swarmStepsSlider').addEventListener('input', (e) => { state.swarmSteps = parseInt(e.target.value, 10); $('#swarmStepsVal').textContent = e.target.value; });
 $('#stopBtn').onclick = () => { state.agentAbort?.abort(); };
 $('#permBadge').onclick = () => { loadTools(); loadSettings(); $('#panelSheet').classList.remove('hidden'); };
 document.querySelectorAll('.perm-btn').forEach((b) => (b.onclick = () => saveSettings({ mode: b.dataset.perm })));

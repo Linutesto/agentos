@@ -307,3 +307,6 @@ body {
 .onode-row.rejected { background: rgba(255,46,136,.08); border-left: 2px solid var(--pink); }
 .onode-row.approved { border-left: 2px solid var(--green); }
 .onode-row.reviewing .orole { color: #ffb454; }
+
+.ochip.step { color: var(--cyan); }
+.slider-range.swarm { accent-color: var(--cyan); }

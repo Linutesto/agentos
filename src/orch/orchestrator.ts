@@ -24,7 +24,8 @@ export interface OrchestratorConfig {
   costPerMTok?: number;                            // $ per 1M tokens for the cost estimate
 }
 
-const DEFAULT_BUDGET: Budget = { maxTokens: 400_000, maxChildren: 6, maxDepth: 3, timeMs: 8 * 60_000 };
+const DEFAULT_BUDGET: Budget = { maxSteps: 300, maxTokens: 2_000_000, maxChildren: 6, maxDepth: 3, timeMs: 30 * 60_000 };
+const PER_LEAF_CAP = 40; // max ReAct iterations any single leaf may take
 
 /** Find and parse the first balanced JSON value in a model reply. */
 function extractJson<T = any>(text: string): T | null {
@@ -64,6 +65,7 @@ export class Orchestrator {
   private agents = new Map<string, SubAgent>();
   private start = 0;
   private tokensUsed = 0;
+  private stepsUsed = 0;
 
   constructor(cfg: OrchestratorConfig) {
     this.cfg = cfg;
@@ -73,6 +75,7 @@ export class Orchestrator {
   // ---- lifecycle ----
   private now() { return Date.now(); }
   private overTime() { return this.now() - this.start > this.budget.timeMs; }
+  private overSteps() { return this.stepsUsed >= this.budget.maxSteps; }
   private aborted() { return this.cfg.signal?.aborted; }
 
   private stats(): RunStats {
@@ -94,6 +97,8 @@ export class Orchestrator {
       failed: a.filter((x) => x.status === 'failed' || x.status === 'cancelled').length,
       tokensUsed: this.tokensUsed,
       costUsd: (this.tokensUsed / 1_000_000) * rate,
+      stepsUsed: this.stepsUsed,
+      maxSteps: this.budget.maxSteps,
       maxDepthReached: a.reduce((m, x) => Math.max(m, x.depth), 0),
       elapsedMs: now - this.start,
       bottleneck,
@@ -175,7 +180,8 @@ export class Orchestrator {
     this.setStatus(agent, 'running');
     const evb = new EventBus();
     const fwd = (e: AgentEvent) => {
-      if (e.name === 'tool.started') this.cfg.emit({ type: 'agent.tool', id: agent.id, name: e.payload.name, phase: 'start' });
+      if (e.name === 'model.called') { this.stepsUsed++; this.cfg.emit({ type: 'stats', stats: this.stats() }); }
+      else if (e.name === 'tool.started') this.cfg.emit({ type: 'agent.tool', id: agent.id, name: e.payload.name, phase: 'start' });
       else if (e.name === 'tool.finished') this.cfg.emit({ type: 'agent.tool', id: agent.id, name: e.payload.name, phase: 'done' });
       else if (e.name === 'tool.failed') this.cfg.emit({ type: 'agent.tool', id: agent.id, name: e.payload.name, phase: 'error' });
     };
@@ -184,8 +190,10 @@ export class Orchestrator {
     const persona = ROLES[agent.role].persona;
     const sys = `${buildAgentSystemPrompt(scoped, this.cfg.env)}\n\n# YOUR ROLE\n${persona}\n\n# YOUR SINGLE OBJECTIVE\n${agent.goal}\n${context ? `\n# CONTEXT FROM OTHER AGENTS\n${context}\n` : ''}`;
 
+    // Size this leaf from the remaining global step budget.
+    const remaining = Math.max(1, this.budget.maxSteps - this.stepsUsed);
     const loop = new AgentLoop({
-      bus: scoped, eventBus: evb, maxIterations: 12, signal: this.cfg.signal,
+      bus: scoped, eventBus: evb, maxIterations: Math.min(PER_LEAF_CAP, remaining), signal: this.cfg.signal,
       chat: (msgs) => this.llm([{ role: 'system', content: sys }, ...msgs], agent),
     });
     const res = await loop.run(agent.goal);
@@ -265,6 +273,7 @@ export class Orchestrator {
   private async node(agent: SubAgent, context: string): Promise<void> {
     if (this.aborted()) { agent.error = 'cancelled'; this.finish(agent, 'failed'); return; }
     if (this.overTime()) { agent.error = 'time budget exceeded'; this.finish(agent, 'failed'); return; }
+    if (this.overSteps()) { agent.error = 'step budget exceeded'; this.finish(agent, 'failed'); return; }
     if (this.tokensUsed > this.budget.maxTokens) { agent.error = 'token budget exceeded'; this.finish(agent, 'failed'); return; }
 
     this.setStatus(agent, 'planning');

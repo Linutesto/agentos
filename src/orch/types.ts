@@ -30,6 +30,7 @@ export type AgentStatus =
   | 'cancelled';
 
 export interface Budget {
+  maxSteps: number;    // total LLM/tool iterations across ALL agents
   maxTokens: number;   // token accounting ceiling (estimate)
   maxChildren: number; // fan-out per node
   maxDepth: number;    // recursion depth
@@ -109,6 +110,8 @@ export interface RunStats {
   failed: number;
   tokensUsed: number;
   costUsd: number;     // estimate
+  stepsUsed: number;   // total iterations consumed
+  maxSteps: number;    // step budget
   maxDepthReached: number;
   elapsedMs: number;
   bottleneck: Bottleneck | null; // longest currently-running agent

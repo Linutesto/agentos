@@ -56,6 +56,9 @@ only the reviewer's points, then the artifact is re-reviewed — bounded by `max
 
 ## Budgets & recovery
 
+- `maxSteps` — total ReAct iterations shared across **all** sub-agents (the Swarm slider,
+  100–1000, default 300). Each leaf is sized from the remaining budget, capped at 40
+  iterations per leaf.
 - `maxDepth` (recursion), `maxChildren` (fan-out), `maxTokens` (accounted), `timeMs`
   (wall-clock). Exceeding any bound stops spawning and finalizes.
 - **Failure recovery**: each node retries once, then is marked failed — a failed
@@ -67,7 +70,7 @@ only the reviewer's points, then the artifact is re-reviewed — bounded by `max
 ```json
 { "model": "...", "goal": "...", "decompose": true, "review": true,
   "maxFixCycles": 1, "costPerMTok": 0.15,
-  "budget": { "maxDepth": 3, "maxChildren": 6, "maxTokens": 400000, "timeMs": 480000 } }
+  "budget": { "maxSteps": 300, "maxDepth": 3, "maxChildren": 6, "maxTokens": 2000000, "timeMs": 1800000 } }
 ```
 Streams `agent.created | agent.status | agent.tokens | agent.tool | agent.review |
 agent.done | agent.failed | stats | final`.
